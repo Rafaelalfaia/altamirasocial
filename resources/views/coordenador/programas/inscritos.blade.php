@@ -6,9 +6,17 @@
 <div class="max-w-7xl mx-auto space-y-6">
 
     {{-- Título --}}
-    <div class="flex items-center justify-between">
-        <h1 class="text-2xl font-bold text-green-800">Inscrições - {{ $programa->nome }}</h1>
+   <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold text-green-800">
+            Inscrições - {{ $programa->nome }}
+        </h1>
+
+        <a href="{{ route('coordenador.programas.indicadores', $programa) }}"
+        class="px-4 py-2 rounded-lg bg-slate-900 text-sm font-semibold text-white hover:bg-slate-800">
+            Indicadores
+        </a>
     </div>
+
 
     {{-- Métricas do contexto atual (busca/região) --}}
     <div class="flex flex-wrap gap-2 items-center text-sm">

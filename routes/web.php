@@ -315,6 +315,43 @@ Route::prefix('programas/{programa}')
             Route::post('inscricoes/pdf-selecionados', [ProgramaController::class, 'baixarPdfSelecionados'])
             ->name('inscricoes.pdf.selecionados');
 
+        Route::get('indicadores', [ProgramaController::class, 'indicadores'])
+            ->name('indicadores');
+
+        Route::get('inscricoes', [ProgramaController::class, 'inscritos'])
+            ->name('inscritos');
+        Route::get('inscricoes/pdf', [ProgramaController::class, 'baixarPdf'])
+            ->name('inscritos.pdf');
+
+        Route::post('inscricoes/bulk-status', [ProgramaController::class, 'bulkStatus'])
+            ->name('inscricoes.bulk-status');
+
+        Route::post('inscricoes/{inscricao}/aprovar', [ProgramaController::class, 'aprovar'])
+            ->whereNumber('inscricao')
+            ->name('aprovar');
+        Route::post('inscricoes/{inscricao}/reprovar', [ProgramaController::class, 'reprovar'])
+            ->whereNumber('inscricao')
+            ->name('reprovar');
+        Route::put('inscricoes/{inscricao}/status', [ProgramaController::class, 'atualizarInscricao'])
+            ->whereNumber('inscricao')
+            ->name('atualizar-inscricao');
+
+        Route::get('inscricoes/{inscricao}/edit', [ProgramaController::class, 'editInscricao'])
+            ->whereNumber('inscricao')
+            ->name('inscricoes.edit');
+        Route::put('inscricoes/{inscricao}', [ProgramaController::class, 'updateInscricao'])
+            ->whereNumber('inscricao')
+            ->name('inscricoes.update');
+        Route::delete('inscricoes/{inscricao}', [ProgramaController::class, 'destroyInscricao'])
+            ->whereNumber('inscricao')
+            ->name('inscricoes.destroy');
+        Route::get('inscricoes/{inscricao}', [ProgramaController::class, 'showInscricao'])
+            ->whereNumber('inscricao')
+            ->name('inscricoes.show');
+
+        Route::post('inscricoes/pdf-selecionados', [ProgramaController::class, 'baixarPdfSelecionados'])
+            ->name('inscricoes.pdf.selecionados');
+
     });
 
 

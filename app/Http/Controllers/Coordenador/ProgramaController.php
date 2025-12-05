@@ -11,6 +11,9 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Carbon\Carbon;
+use App\Models\Cidadao;
+
 
 
 
@@ -442,6 +445,405 @@ class ProgramaController extends Controller
             'inscricao' => $inscricao,
         ]);
     }
+
+    public function indicadores(Programa $programa, Request $request)
+    {
+        $this->authorize('view', $programa);
+
+        $q = trim((string) $request->query('q', ''));
+        $cidadaosIdsSelecionados = (array) $request->input('cidadaos', []);
+
+        // Base: inscrições do programa
+        $inscricoesBase = ProgramaInscricao::where('programa_id', $programa->id);
+
+        $metricsPrograma = [
+            'total_inscricoes' => (clone $inscricoesBase)->count(),
+            'aprovadas'        => (clone $inscricoesBase)->where('status', 'aprovado')->count(),
+            'pendentes'        => (clone $inscricoesBase)->where('status', 'pendente')->count(),
+            'reprovadas'       => (clone $inscricoesBase)->where('status', 'reprovado')->count(),
+        ];
+
+        // Carrega todos os cidadãos que têm inscrição nesse programa
+        $cidadaosPrograma = Cidadao::with([
+                'bairro',
+                'acompanhamentos',
+                'ultimoAcompanhamento',
+                'inscricoes.programa',
+            ])
+            ->whereHas('inscricoes', function ($q2) use ($programa) {
+                $q2->where('programa_id', $programa->id);
+            })
+            ->get();
+
+        // ---------- PERFIL GERAL DO PROGRAMA ----------
+
+        // Sexo
+        $sexoPrograma = [
+            'Masculino'             => 0,
+            'Feminino'              => 0,
+            'Outro/Não informado'   => 0,
+        ];
+
+        // Renda familiar por faixa
+        $rendaFaixasPrograma = [
+            'Até R$ 600'        => 0,
+            'R$ 601–1.200'      => 0,
+            'R$ 1.201–2.000'    => 0,
+            'Acima de R$ 2.000' => 0,
+            'Não informado'     => 0,
+        ];
+
+        // Idade por faixa
+        $idadeFaixasPrograma = [
+            '0–12'           => 0,
+            '13–17'          => 0,
+            '18–24'          => 0,
+            '25–39'          => 0,
+            '40–59'          => 0,
+            '60+'            => 0,
+            'Não informado'  => 0,
+        ];
+
+        // PCD
+        $pcdPrograma = [
+            'Com deficiência'  => 0,
+            'Sem deficiência'  => 0,
+        ];
+
+        // Escolaridade / Bairros / Emprego (situação profissional)
+        $escolaridadePrograma = [];
+        $bairrosPrograma = [];
+        $empregoPrograma = [];
+
+        // Acompanhamentos
+        $totalAcompPrograma = 0;
+        $acompanhamentoDistribuicao = [
+            '0 atend.'   => 0,
+            '1–2 atend.' => 0,
+            '3–5 atend.' => 0,
+            '6+ atend.'  => 0,
+        ];
+
+        // Participação em outros programas
+        $cidadaosComOutrosProgramas = 0;
+        $outrosProgramasContagem = [];
+
+        $hoje = Carbon::now();
+        $idadesParaMedia = [];
+        $rendasParaMedia = [];
+        $rendasPerCapitaParaMedia = [];
+
+        foreach ($cidadaosPrograma as $cid) {
+            // Sexo
+            $sexo = strtolower(trim((string) $cid->sexo));
+            if (in_array($sexo, ['masculino', 'm'])) {
+                $sexoPrograma['Masculino']++;
+            } elseif (in_array($sexo, ['feminino', 'f'])) {
+                $sexoPrograma['Feminino']++;
+            } else {
+                $sexoPrograma['Outro/Não informado']++;
+            }
+
+            // Renda familiar
+            $renda = $cid->renda_total_familiar;
+            if (is_null($renda)) {
+                $rendaFaixasPrograma['Não informado']++;
+            } else {
+                $renda = (float) $renda;
+                $rendasParaMedia[] = $renda;
+
+                if ($renda <= 600) {
+                    $rendaFaixasPrograma['Até R$ 600']++;
+                } elseif ($renda <= 1200) {
+                    $rendaFaixasPrograma['R$ 601–1.200']++;
+                } elseif ($renda <= 2000) {
+                    $rendaFaixasPrograma['R$ 1.201–2.000']++;
+                } else {
+                    $rendaFaixasPrograma['Acima de R$ 2.000']++;
+                }
+            }
+
+            // Renda per capita (se existir campo/atributo)
+            if (!is_null($cid->renda_per_capita ?? null)) {
+                $rendasPerCapitaParaMedia[] = (float) $cid->renda_per_capita;
+            }
+
+            // Idade
+            if ($cid->data_nascimento) {
+                try {
+                    $idade = Carbon::parse($cid->data_nascimento)->age;
+                    $idadesParaMedia[] = $idade;
+
+                    if ($idade <= 12) {
+                        $idadeFaixasPrograma['0–12']++;
+                    } elseif ($idade <= 17) {
+                        $idadeFaixasPrograma['13–17']++;
+                    } elseif ($idade <= 24) {
+                        $idadeFaixasPrograma['18–24']++;
+                    } elseif ($idade <= 39) {
+                        $idadeFaixasPrograma['25–39']++;
+                    } elseif ($idade <= 59) {
+                        $idadeFaixasPrograma['40–59']++;
+                    } else {
+                        $idadeFaixasPrograma['60+']++;
+                    }
+                } catch (\Exception $e) {
+                    $idadeFaixasPrograma['Não informado']++;
+                }
+            } else {
+                $idadeFaixasPrograma['Não informado']++;
+            }
+
+            // PCD
+            $temDeficiencia = (bool) ($cid->pcd ?? false) || (bool) ($cid->possui_deficiencia ?? false);
+            if ($temDeficiencia) {
+                $pcdPrograma['Com deficiência']++;
+            } else {
+                $pcdPrograma['Sem deficiência']++;
+            }
+
+            // Escolaridade
+            $esc = trim((string) $cid->escolaridade);
+            if ($esc === '') {
+                $esc = 'Não informada';
+            }
+            $escolaridadePrograma[$esc] = ($escolaridadePrograma[$esc] ?? 0) + 1;
+
+            // Bairros
+            $bairroNome = optional($cid->bairro)->nome ?? ($cid->bairro ?? 'Não informado');
+            $bairrosPrograma[$bairroNome] = ($bairrosPrograma[$bairroNome] ?? 0) + 1;
+
+            // Emprego / situação profissional
+            $situacao = optional($cid->ultimoAcompanhamento)->situacao_profissional ?: ($cid->ocupacao ?? '');
+            $situacao = trim((string) $situacao);
+            if ($situacao === '') {
+                $situacao = 'Não informado';
+            }
+            $empregoPrograma[$situacao] = ($empregoPrograma[$situacao] ?? 0) + 1;
+
+            // Acompanhamentos
+            $qtdAcomp = $cid->acompanhamentos->count();
+            $totalAcompPrograma += $qtdAcomp;
+
+            if ($qtdAcomp === 0) {
+                $acompanhamentoDistribuicao['0 atend.']++;
+            } elseif ($qtdAcomp <= 2) {
+                $acompanhamentoDistribuicao['1–2 atend.']++;
+            } elseif ($qtdAcomp <= 5) {
+                $acompanhamentoDistribuicao['3–5 atend.']++;
+            } else {
+                $acompanhamentoDistribuicao['6+ atend.']++;
+            }
+
+            // Participação em outros programas
+            $outros = $cid->inscricoes->where('programa_id', '!=', $programa->id);
+
+            if ($outros->isNotEmpty()) {
+                $cidadaosComOutrosProgramas++;
+
+                foreach ($outros as $insc) {
+                    $nomeProg = optional($insc->programa)->nome ?? ('Programa ' . $insc->programa_id);
+                    $outrosProgramasContagem[$nomeProg] = ($outrosProgramasContagem[$nomeProg] ?? 0) + 1;
+                }
+            }
+        }
+
+        // Médias gerais do programa
+        $metricsProgramaExtra = [
+            'idade_media'            => !empty($idadesParaMedia) ? round(array_sum($idadesParaMedia) / count($idadesParaMedia), 1) : null,
+            'renda_media_familiar'   => !empty($rendasParaMedia) ? round(array_sum($rendasParaMedia) / count($rendasParaMedia), 2) : null,
+            'renda_media_per_capita' => !empty($rendasPerCapitaParaMedia) ? round(array_sum($rendasPerCapitaParaMedia) / count($rendasPerCapitaParaMedia), 2) : null,
+            'media_acompanhamentos'  => $cidadaosPrograma->count() > 0 ? round($totalAcompPrograma / $cidadaosPrograma->count(), 1) : null,
+            'cidadaos_outros_programas' => $cidadaosComOutrosProgramas,
+            'total_cidadaos_programa'   => $cidadaosPrograma->count(),
+        ];
+
+        $escolaridadePrograma = collect($escolaridadePrograma)->sortDesc();
+        $bairrosPrograma = collect($bairrosPrograma)->sortDesc()->take(10);
+        $empregoPrograma = collect($empregoPrograma)->sortDesc()->take(6);
+        $outrosProgramasTop = collect($outrosProgramasContagem)->sortDesc()->take(6);
+
+        // ---------- BUSCA DE CIDADÃOS + SELEÇÃO ----------
+
+        $cidadaosBusca = collect();
+        if ($q !== '') {
+            $cidadaosBusca = Cidadao::query()
+                ->whereHas('inscricoes', function ($query) use ($programa) {
+                    $query->where('programa_id', $programa->id);
+                })
+                ->where(function ($query) use ($q) {
+                    $query->where('nome', 'like', "%{$q}%")
+                        ->orWhere('cpf', 'like', "%{$q}%");
+                })
+                ->orderBy('nome')
+                ->limit(30)
+                ->get();
+        }
+
+        $cidadaosSelecionados = collect();
+        $metricsCidadaos = [
+            'total'                     => 0,
+            'idade_media'               => null,
+            'renda_media_familiar'      => null,
+            'renda_media_per_capita'    => null,
+            'total_acompanhamentos'     => 0,
+            'total_programas_distintos' => 0,
+        ];
+
+        $chartProgramasCidadaos = [
+            'labels' => [],
+            'data'   => [],
+        ];
+
+        $sexoSelecionados = [
+            'Masculino'             => 0,
+            'Feminino'              => 0,
+            'Outro/Não informado'   => 0,
+        ];
+        $idadeFaixasSelecionados = [
+            '0–12'           => 0,
+            '13–17'          => 0,
+            '18–24'          => 0,
+            '25–39'          => 0,
+            '40–59'          => 0,
+            '60+'            => 0,
+            'Não informado'  => 0,
+        ];
+        $pcdSelecionados = [
+            'Com deficiência' => 0,
+            'Sem deficiência' => 0,
+        ];
+
+        if (!empty($cidadaosIdsSelecionados)) {
+            $cidadaosSelecionados = Cidadao::with(['acompanhamentos', 'inscricoes.programa'])
+                ->whereIn('id', $cidadaosIdsSelecionados)
+                ->get();
+
+            if ($cidadaosSelecionados->isNotEmpty()) {
+                $metricsCidadaos['total'] = $cidadaosSelecionados->count();
+
+                $idadesSel = [];
+                $rendaSel = [];
+                $rendaPerCapSel = [];
+
+                foreach ($cidadaosSelecionados as $cid) {
+                    // idade
+                    if ($cid->data_nascimento) {
+                        try {
+                            $idade = Carbon::parse($cid->data_nascimento)->age;
+                            $idadesSel[] = $idade;
+
+                            if ($idade <= 12) {
+                                $idadeFaixasSelecionados['0–12']++;
+                            } elseif ($idade <= 17) {
+                                $idadeFaixasSelecionados['13–17']++;
+                            } elseif ($idade <= 24) {
+                                $idadeFaixasSelecionados['18–24']++;
+                            } elseif ($idade <= 39) {
+                                $idadeFaixasSelecionados['25–39']++;
+                            } elseif ($idade <= 59) {
+                                $idadeFaixasSelecionados['40–59']++;
+                            } else {
+                                $idadeFaixasSelecionados['60+']++;
+                            }
+                        } catch (\Exception $e) {
+                            $idadeFaixasSelecionados['Não informado']++;
+                        }
+                    } else {
+                        $idadeFaixasSelecionados['Não informado']++;
+                    }
+
+                    // renda
+                    if (!is_null($cid->renda_total_familiar)) {
+                        $rendaSel[] = (float) $cid->renda_total_familiar;
+                    }
+                    if (!is_null($cid->renda_per_capita ?? null)) {
+                        $rendaPerCapSel[] = (float) $cid->renda_per_capita;
+                    }
+
+                    // sexo
+                    $sexo = strtolower(trim((string) $cid->sexo));
+                    if (in_array($sexo, ['masculino', 'm'])) {
+                        $sexoSelecionados['Masculino']++;
+                    } elseif (in_array($sexo, ['feminino', 'f'])) {
+                        $sexoSelecionados['Feminino']++;
+                    } else {
+                        $sexoSelecionados['Outro/Não informado']++;
+                    }
+
+                    // PCD
+                    $temDef = (bool) ($cid->pcd ?? false) || (bool) ($cid->possui_deficiencia ?? false);
+                    if ($temDef) {
+                        $pcdSelecionados['Com deficiência']++;
+                    } else {
+                        $pcdSelecionados['Sem deficiência']++;
+                    }
+                }
+
+                if (!empty($idadesSel)) {
+                    $metricsCidadaos['idade_media'] = round(array_sum($idadesSel) / count($idadesSel), 1);
+                }
+                if (!empty($rendaSel)) {
+                    $metricsCidadaos['renda_media_familiar'] = round(array_sum($rendaSel) / count($rendaSel), 2);
+                }
+                if (!empty($rendaPerCapSel)) {
+                    $metricsCidadaos['renda_media_per_capita'] = round(array_sum($rendaPerCapSel) / count($rendaPerCapSel), 2);
+                }
+
+                $metricsCidadaos['total_acompanhamentos'] = $cidadaosSelecionados
+                    ->sum(fn ($c) => $c->acompanhamentos->count());
+
+                $programasIds = $cidadaosSelecionados
+                    ->flatMap(fn ($c) => $c->inscricoes->pluck('programa_id'))
+                    ->unique();
+
+                $metricsCidadaos['total_programas_distintos'] = $programasIds->count();
+
+                $programasAgrupados = $cidadaosSelecionados
+                    ->flatMap(fn ($c) => $c->inscricoes)
+                    ->groupBy('programa_id');
+
+                $chartProgramasCidadaos['labels'] = $programasAgrupados
+                    ->map(function ($inscricoes) {
+                        $primeira = $inscricoes->first();
+                        return optional($primeira->programa)->nome ?? 'Programa ' . $primeira->programa_id;
+                    })
+                    ->values()
+                    ->all();
+
+                $chartProgramasCidadaos['data'] = $programasAgrupados
+                    ->map->count()
+                    ->values()
+                    ->all();
+            }
+        }
+
+        return view('coordenador.programas.indicadores', compact(
+            'programa',
+            'metricsPrograma',
+            'metricsProgramaExtra',
+            'sexoPrograma',
+            'rendaFaixasPrograma',
+            'idadeFaixasPrograma',
+            'pcdPrograma',
+            'escolaridadePrograma',
+            'bairrosPrograma',
+            'empregoPrograma',
+            'acompanhamentoDistribuicao',
+            'outrosProgramasTop',
+            'cidadaosBusca',
+            'q',
+            'cidadaosSelecionados',
+            'cidadaosIdsSelecionados',
+            'metricsCidadaos',
+            'chartProgramasCidadaos',
+            'sexoSelecionados',
+            'idadeFaixasSelecionados',
+            'pcdSelecionados'
+        ));
+    }
+
+
 
     private function autorizaInscricao(Programa $programa, ProgramaInscricao $inscricao)
     {
